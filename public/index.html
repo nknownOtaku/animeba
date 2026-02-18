@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Anime Streamer</title>
+  <style>
+    :root { --bg: #0f0f1a; --card: #1a1a2e; --accent: #6c5ce7; --text: #eee; --muted: #aaa; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+    header { padding: 1rem 2rem; background: var(--card); border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+    h1 { font-size: 1.5rem; color: var(--accent); }
+    .container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+    .card { background: var(--card); border-radius: 8px; padding: 1rem; cursor: pointer; transition: transform 0.2s; }
+    .card:hover { transform: translateY(-3px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+    .card img { width: 100%; aspect-ratio: 3/4; object-fit: cover; border-radius: 4px; background: #222; }
+    .card h3 { font-size: 1rem; margin: 0.5rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card .meta { font-size: 0.85rem; color: var(--muted); display: flex; justify-content: space-between; }
+    .rating { color: #f1c40f; }
+    .episode-list { display: none; margin-top: 1rem; }
+    .episode-item { padding: 0.75rem; background: #222; border-radius: 4px; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; }
+    .episode-item button { background: var(--accent); border: none; color: white; padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer; }
+    .video-section { display: none; margin-top: 2rem; }
+    .video-player { width: 100%; max-width: 800px; margin: 0 auto; background: #000; border-radius: 8px; overflow: hidden; }
+    .video-player video { width: 100%; display: block; }
+    .download-links { margin-top: 1rem; }
+    .download-links a { display: inline-block; margin: 0.25rem; padding: 0.4rem 0.8rem; background: #2d3436; color: white; text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
+    .download-links a:hover { background: var(--accent); }
+    .loading { text-align: center; padding: 2rem; color: var(--muted); }
+    .error { background: #c0392b; color: white; padding: 0.75rem; border-radius: 4px; margin: 1rem 0; }
+    .back-btn { background: none; border: 1px solid var(--accent); color: var(--accent); padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; margin-bottom: 1rem; }
+    .search-box { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .search-box input { flex: 1; padding: 0.6rem; border-radius: 4px; border: 1px solid #444; background: var(--card); color: white; }
+    .search-box button { padding: 0.6rem 1.2rem; background: var(--accent); border: none; color: white; border-radius: 4px; cursor: pointer; }
+    @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎌 Anime Streamer</h1>
+    <div id="user-actions"></div>
+  </header>
+  
+  <div class="container">
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="Search anime...">
+      <button onclick="searchAnime()">🔍 Search</button>
+    </div>
+        <div id="content">
+      <div class="loading" id="loader">Loading latest releases...</div>
+      <div id="errorBox" class="error" style="display:none"></div>
+      
+      <!-- Latest Releases Grid -->
+      <div class="grid" id="animeGrid"></div>
+      
+      <!-- Episode List (hidden by default) -->
+      <div id="episodeView" style="display:none">
+        <button class="back-btn" onclick="showLatest()">← Back to Latest</button>
+        <h2 id="animeTitle"></h2>
+        <div id="episodeList"></div>
+      </div>
+      
+      <!-- Video Player Section -->
+      <div id="videoView" class="video-section">
+        <button class="back-btn" onclick="showEpisodes()">← Back to Episodes</button>
+        <h2 id="episodeTitle"></h2>
+        <div class="video-player">
+          <video id="player" controls playsinline>
+            <source src="" type="application/x-mpegURL">
+            Your browser does not support HLS playback.
+          </video>
+        </div>
+        <div class="download-links" id="downloadLinks"></div>
+        <p id="videoNote" style="color:var(--muted);font-size:0.9rem;margin-top:0.5rem"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- HLS.js for .m3u8 support -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  
+  <script>
+    const API = ''; // Empty = same origin; set to your deployed URL if needed
+    let currentAnime = null;
+    let currentEpisode = null;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      loadLatest();
+      
+      // Search on Enter
+      document.getElementById('searchInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') searchAnime();
+      });
+    });
+
+    async function fetchJSON(url) {
+      try {        const res = await fetch(API + url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } catch (err) {
+        showError(err.message);
+        return null;
+      }
+    }
+
+    function showError(msg) {
+      const box = document.getElementById('errorBox');
+      box.textContent = '⚠️ ' + msg;
+      box.style.display = 'block';
+      setTimeout(() => box.style.display = 'none', 5000);
+    }
+
+    function showLoader(show) {
+      document.getElementById('loader').style.display = show ? 'block' : 'none';
+    }
+
+    // Load latest releases
+    async function loadLatest() {
+      showLoader(true);
+      document.getElementById('animeGrid').innerHTML = '';
+      document.getElementById('episodeView').style.display = 'none';
+      document.getElementById('videoView').style.display = 'none';
+      
+      const res = await fetchJSON('/api/latest?page=1');
+      showLoader(false);
+      
+      if (!res?.success) return;
+      
+      const grid = document.getElementById('animeGrid');
+      res.data.forEach(anime => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          ${anime.thumbnail ? `<img src="${anime.thumbnail}" alt="${anime.title}" loading="lazy">` : ''}
+          <h3>${anime.title}</h3>
+          <div class="meta">
+            <span>Ep ${anime.episode}</span>
+            <span class="rating">${'★'.repeat(4)}☆</span>
+          </div>
+        `;
+        card.onclick = () => loadEpisodes(anime.anime_session, anime.title);
+        grid.appendChild(card);
+      });
+    }
+
+    // Search anime    async function searchAnime() {
+      const q = document.getElementById('searchInput').value.trim();
+      if (!q) return loadLatest();
+      
+      showLoader(true);
+      // Note: AnimePahe API search endpoint would go here
+      // For demo, just reload latest with a message
+      showLoader(false);
+      showError('Search not implemented in this demo. Browse latest releases instead.');
+    }
+
+    // Load episodes for an anime
+    async function loadEpisodes(animeSession, title) {
+      showLoader(true);
+      document.getElementById('animeGrid').style.display = 'none';
+      document.getElementById('videoView').style.display = 'none';
+      document.getElementById('episodeView').style.display = 'block';
+      document.getElementById('animeTitle').textContent = title;
+      
+      const res = await fetchJSON(`/api/episodes/${animeSession}?page=1`);
+      showLoader(false);
+      
+      if (!res?.success) return;
+      
+      currentAnime = { session: animeSession, title };
+      const list = document.getElementById('episodeList');
+      list.innerHTML = '';
+      
+      res.data.slice().reverse().forEach(ep => {
+        const item = document.createElement('div');
+        item.className = 'episode-item';
+        item.innerHTML = `
+          <span><strong>Ep ${ep.episode}</strong> ${ep.title}</span>
+          <button onclick="loadVideo('${animeSession}', '${ep.session}', '${ep.title.replace(/'/g, "\\'")}')">▶ Play</button>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    function showEpisodes() {
+      document.getElementById('videoView').style.display = 'none';
+      document.getElementById('episodeView').style.display = 'block';
+      if (currentAnime) loadEpisodes(currentAnime.session, currentAnime.title);
+    }
+
+    function showLatest() {
+      document.getElementById('episodeView').style.display = 'none';
+      document.getElementById('videoView').style.display = 'none';
+      document.getElementById('animeGrid').style.display = 'grid';
+      loadLatest();    }
+
+    // Load video player
+    async function loadVideo(animeSession, episodeSession, title) {
+      showLoader(true);
+      document.getElementById('episodeView').style.display = 'none';
+      document.getElementById('videoView').style.display = 'block';
+      document.getElementById('episodeTitle').textContent = title;
+      document.getElementById('videoNote').textContent = '';
+      document.getElementById('downloadLinks').innerHTML = '';
+      
+      const player = document.getElementById('player');
+      player.src = '';
+      if (window.Hls?.isSupported?.()) window.hls?.destroy();
+      
+      // Get download options first
+      const dlRes = await fetchJSON(`/api/downloads/${animeSession}/${episodeSession}`);
+      if (dlRes?.success) {
+        const links = document.getElementById('downloadLinks');
+        Object.entries(dlRes.data).forEach(([quality, info]) => {
+          const a = document.createElement('a');
+          a.href = info.url;
+          a.target = '_blank';
+          a.textContent = `📥 ${quality} (${info.audio})`;
+          links.appendChild(a);
+        });
+      }
+      
+      // Try to get playable video URL (prefer 720p)
+      const qualities = ['720p', '1080p', '480p', '360p'];
+      let videoUrl = null;
+      
+      for (const q of qualities) {
+        if (dlRes?.data[q]?.url) {
+          const vidRes = await fetchJSON(`/api/video?url=${encodeURIComponent(dlRes.data[q].url)}`);
+          if (vidRes?.success && vidRes.data?.url) {
+            videoUrl = vidRes.data;
+            break;
+          }
+        }
+      }
+      
+      showLoader(false);
+      
+      if (!videoUrl) {
+        document.getElementById('videoNote').textContent = '⚠️ Could not extract playable video. Try download links above.';
+        return;
+      }
+      
+      // Setup player      if (videoUrl.type === 'hls' && Hls.isSupported()) {
+        const hls = new Hls();
+        window.hls = hls;
+        hls.loadSource(videoUrl.url);
+        hls.attachMedia(player);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => player.play().catch(()=>{}));
+      } else if (videoUrl.type === 'direct') {
+        player.src = videoUrl.url;
+        player.play().catch(()=>{});
+      } else {
+        document.getElementById('videoNote').textContent = videoUrl.note || 'This link requires a browser to open.';
+      }
+      
+      if (videoUrl.format === '.m3u8') {
+        document.getElementById('videoNote').textContent = '📺 HLS stream loaded. Use VLC or this player to watch.';
+      }
+    }
+  </script>
+</body>
+</html>
